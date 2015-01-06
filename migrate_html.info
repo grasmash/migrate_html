@@ -1,0 +1,32 @@
+name = "Migrate HTML"
+description = "Provides example classes for migrating from static HTML"
+package = migrate
+core = 7.x
+dependencies[] = migrate
+dependencies[] = composer_manager
+dependencies[] = redirect
+
+; Miscellaneous
+files[] = includes/HtmlCleanUp.inc
+files[] = includes/StringCleanUp.inc
+
+; Base Classes.
+files[] = includes/base_classes/StaticHtmlBaseMigration.inc
+files[] = includes/base_classes/StaticHtmlToNodeMigration.inc
+files[] = includes/base_classes/FileSourceMigration.inc
+files[] = includes/base_classes/BinaryFileMigration.inc
+files[] = includes/base_classes/StaticHtmlToPageMigration.inc
+
+; Chunk Parsers
+files[] = includes/StaticHtmlChunkParser.inc
+
+; Source Parsers
+files[] = includes/source_parsers/SourceParser.inc
+
+; Obtainers
+files[] = includes/source_parsers/obtainers/Obtainer.inc
+files[] = includes/source_parsers/obtainers/ObtainBody.inc
+files[] = includes/source_parsers/obtainers/ObtainTitle.inc
+
+; Example migrations
+files[] = includes/examples/ExampleMigration.inc
