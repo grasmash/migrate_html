@@ -27,3 +27,29 @@ JOIN {node} n ON (n.vid = nr.vid AND n.nid = :nid)
 SET nr.status = 1 WHERE n.status = 1 AND nr.status = 0",
     array(':nid' => $entity->nid));
 }
+
+/**
+ * Compare current row to an array of values to skip. Log message if skipped.
+ *
+ * @param string $file_uid
+ *   The unique id for the row being processed. Typically legacy_path or fileid.
+ *
+ * @param array $skip_these
+ *   Array of values to skip and not migrate.
+ *
+ * @return bool
+ *   -TRUE if the row should be skipped.
+ *   -FALSE if the row should not be skipped.
+ */
+function migrate_html_skip_files($file_uid, $skip_these) {
+  if (in_array($file_uid, $skip_these)) {
+    // This page should be skipped.
+    $message = t('- @fileid  -> Skipped: intentionally.', array('@fileid' => $file_uid));
+    watchdog('doj_migration', $message, array('@fileid' => $file_uid), WATCHDOG_WARNING);
+
+    return TRUE;
+  }
+
+  // This page should not be skipped.
+  return FALSE;
+}

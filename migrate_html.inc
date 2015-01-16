@@ -183,29 +183,3 @@ function migrate_html_relative_to_absolute_url($rel, $base, $subpath = '') {
   // Absolute URL is ready.
   return $scheme . '://' . $abs;
 }
-
-/**
- * Compare current row to an array of values to skip. Log message if skipped.
- *
- * @param string $file_uid
- *   The unique id for the row being processed. Typically legacy_path or fileid.
- *
- * @param array $skip_these
- *   Array of values to skip and not migrate.
- *
- * @return bool
- *   -TRUE if the row should not be skipped.
- *   -FALSE if the row should be skipped.
- */
-function migrate_html_check_skip_this($file_uid, $skip_these) {
-  if (in_array($file_uid, $skip_these)) {
-    // This page should be skipped.
-    $message = t('- @fileid  -> Skipped: intentionally.', array('@fileid' => $file_uid));
-    watchdog('migrate_html', $message, array('@fileid' => $file_uid), WATCHDOG_WARNING);
-
-    return FALSE;
-  }
-
-  // This page should not be skipped.
-  return TRUE;
-}
