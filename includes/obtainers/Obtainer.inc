@@ -3,54 +3,31 @@
 /**
  * @file
  * Class Obtainer
+ *
+ * The Obtainer serves to find a target string within DOM markup. It will
+ * iterate over a stack of finder methods until it finds the string that it is
+ * looking for, at which point it returns the string.
  */
 
-class Obtainer {
+abstract class Obtainer {
 
   /**
    * @var object
-   *   QueryPath element that was the last thing found.
+   *   The QueryPath element to be tested.
    */
-  protected $justFound;
+  private $element;
 
   /**
-   * @var string
-   *   Text that has not been evaluated yet.
-   */
-  protected $possibleText;
-
-  /**
-   * @var object
+   * @var QueryPath
    *   QueryPath object passed in at instantiation.
    */
   protected $queryPath;
 
   /**
-   * @var string
-   *   The name of the findMethod that is currently running.
-   */
-  protected $currentFindMethod = '';
-
-  /**
    * @var array
    *   Array of find methods to call, in order. Passed in at instantiation.
    */
-  protected $methodStack = array();
-
-  /**
-   * @var string
-   *   String of text that was trimmed off during trim in cleanup.  It was
-   *   removed from the dom so this is the only place to prevent it from getting
-   *   lost.
-   */
-  protected $textDiscarded = '';
-
-  /**
-   * @var string
-   *   String of text that has been cleaned and evaluated and is the Title.
-   */
-  protected $textToReturn = '';
-
+  private $methodStack = array();
 
   /**
    * Constructor for the Obtainer.
@@ -63,405 +40,180 @@ class Obtainer {
    */
   public function __construct($query_path, $method_stack = array()) {
     $this->queryPath = $query_path;
+    $this->setMethodStack($method_stack);
+  }
 
-    if ($method_stack) {
-      $this->setMethodStack($method_stack);
+  /**
+   * Sets the $methodStack property, checking that each method is valid.
+   *
+   * @param array $method_stack
+   *   The stack of methods to be run.
+   */
+  public function setMethodStack($method_stack) {
+    foreach ($method_stack as $key => $method) {
+      if (!method_exists($this, $method)) {
+        unset($method_stack[$key]);
+        $this->obtainerMessage('The target method @method does not exist and was skipped.', array('@method' => $method), WATCHDOG_DEBUG);
+      }
     }
-  }
-
-  // ******************** Getters and Setters ***************************.
-
-
-  /**
-   * Basic setter for the query path element that was just found by the finder.
-   */
-  protected function setJustFound($qp_element) {
-    // Since this is a reference to an element in the query path, must clear it
-    // before giving it a new element.
-    unset($this->justFound);
-    $this->justFound = $qp_element;
+    $this->methodStack = $method_stack;
   }
 
   /**
-   * Basic getter for the query path element that was just found by the finder.
+   * Sets $this->element.
+   *
+   * @param object $element
+   *   The QueryPath element to be removed from source if string is obtained.
    */
-  protected function getJustFound() {
-    return $this->justFound;
+  public function setElementToRemove($element) {
+    $this->element = $element;
   }
 
   /**
-   * Basic setter for text found that might be returned if validated.
+   * Calls remove() on the currently set QueryPath element.
    */
-  protected function setPossibleText($text) {
-    $this->possibleText = $text;
-  }
-
-  /**
-   * Basic getter for text found that might be returned if validated.
-   */
-  protected function getPossibleText() {
-    return $this->possibleText;
-  }
-
-  /**
-   * Basic setter for the target finder method currently running/just ran.
-   */
-  protected function setCurrentFindMethod($target) {
-    $this->currentFindMethod = $target;
-  }
-
-  /**
-   * Basic getter for the target finder method currently running/just ran.
-   */
-  protected function getCurrentFindMethod() {
-    return $this->currentFindMethod;
-  }
-
-  /**
-   * Basic setter for text that is discarded after truncation.
-   */
-  protected function setTextDiscarded($text) {
-    $text = trim($text);
-    if (!empty($text)) {
-      $this->textDiscarded = $text;
-      // Alert that there is something discared.
-      drush_migrate_html_debug_output("WARNING: Discarded Text vvv Use  {instance}->getTextDiscarded()");
+  public function removeElement() {
+    if (!empty($this->element)) {
+      $this->element->remove();
     }
   }
 
   /**
-   * Basic public getter for text that is discarded after truncation.
+   * Processes each method in method stack until a string is found.
    */
-  public function getTextDiscarded() {
-    return $this->textDiscarded;
-  }
+  public function obtain() {
+    // Loop through the stack.
+    foreach ($this->methodStack as $current_method) {
+      // Run the method. It is expected that the method will return a string.
+      $found_string = $this->$current_method();
+      $found_string = $this->cleanString($found_string);
 
-  /**
-   * Basic setter for the target finder method that gave useable results.
-   */
-  protected function setMethodStack($stack = array()) {
-    if (is_array($stack)) {
-      $this->methodStack = $stack;
+      if ($this->validateString($found_string)) {
+        // Give child classes opportunity to process the string before return.
+        $found_string = $this->processString($found_string);
+
+        $this->obtainerMessage('@method found a string.', array('@method' => $current_method), WATCHDOG_DEBUG);
+
+        // Remove the element from the DOM and exit loop.
+        $this->removeElement();
+
+        return $found_string;
+      }
     }
+
+    $this->obtainerMessage('NO MATCHES FOUND', array(), WATCHDOG_DEBUG);
   }
 
   /**
-   * Basic getter for the target finder method that gave useable results.
-   */
-  protected function getMethodStack() {
-    return $this->methodStack;
-  }
-
-  /**
-   * Basic setter for text that is validated and ready to return.
-   */
-  protected function setTextToReturn($text) {
-    $this->textToReturn = $text;
-  }
-
-  /**
-   * Basic getter for text that is validated and ready to return.
-   */
-  protected function getTextToReturn() {
-    return $this->textToReturn;
-  }
-
-  /**
-   * Basic getter public alias of getTextToReturn().
-   */
-  public function getText() {
-    return $this->getTextToReturn();
-  }
-
-
-  // ************* Methods ***************************.
-
-  /**
-   * Removes $justFound from the dom if it is not empty.
-   */
-  protected function removeFoundDomElement() {
-    $jf = $this->getJustFound();
-    if (!empty($jf)) {
-      $this->getJustFound()->remove();
-    }
-    // Break the reference to the QueryPath.
-    $this->clearJustFound();
-  }
-
-  /**
-   * Extracts, validates a string from html and puts remainder into the source.
+   * Cleans $text and returns it.
    *
    * @param string $string
-   *   The string of text to validated and remove.
-   * @param object $qp_element
-   *   The queryPath element to alter and put back.
-   */
-  protected function extractAndPutBack($string, $qp_element) {
-    // Clean string.
-    $processed_text = $this->cleanPossibleText($string);
-    // Evaluate string.
-    $this->setPossibleText($processed_text);
-    $valid = $this->validatePossibleText();
-    if ($valid) {
-      // The string checks out, remove the original string from the element.
-      $full_source = $qp_element->html();
-      $new_source = str_replace($string, '', $full_source);
-      $qp_element->html($new_source);
-      // Since we have already surgically removed just the string, don't remove
-      // the entire element.
-      $this->removeMeNot();
-    }
-  }
-
-  /**
-   * Clean PossibleText prior to validation.
-   */
-  protected function cleanThisPossibleText() {
-    $text = $this->getPossibleText();
-    $text = $this->cleanPossibleText($text);
-    $this->setPossibleText($text);
-  }
-
-
-  /**
-   * Clears the ability to remove $justFound from the querypath object.
-   */
-  protected function clearJustFound() {
-    // Just unset the $justFound so it can not be removed from the querypath.
-    unset($this->justFound);
-  }
-
-  /**
-   * Get specific tds from a table, and lines it up to be removed.
-   *
-   * @param object $table
-   *   A query path object with a table as the root.
-   * @param int $tr_target
-   *   Which tr do you want. Starting the count from 1.
-   * @param int $td_target
-   *   Which td do you want. Starting the count from 1.
+   *   Text to clean and return.
    *
    * @return string
-   *   The text inside of the wanted tr and td.
+   *   The cleaned text.
    */
-  protected function getFromTable($table, $tr_target, $td_target) {
-    $trcount = 1;
-    $tdcount = 1;
+  public static function cleanString($string) {
+    // There are also numeric html special chars, let's change those.
+    module_load_include('inc', 'migrate_html', 'includes/migrate_html');
+    $string = migrate_html_html_entity_decode_numeric($string);
 
-    foreach ($table->find("tr") as $tr) {
-      if ($trcount == $tr_target) {
-        foreach ($tr->find("td") as $td) {
-          if ($tdcount == $td_target) {
-            $this->setJustFound($td);
-            return $td->text();
-          }
-          $tdcount++;
-        }
-      }
-      $trcount++;
+    // Checking again in case another process rendered it non UTF-8.
+    $is_utf8 = mb_check_encoding($string, 'UTF-8');
+
+    if (!$is_utf8) {
+      $string = StringCleanUp::fixEncoding($string);
     }
 
-    return "";
-  }
+    $string = StringCleanUp::stripCmsLegacyMarkup($string);
 
-
-  /**
-   * Alias for clearJustFound.  Prevents removal of justFound from the QP.
-   */
-  protected function removeMeNot() {
-    // An alias for clearJustFound.
-    $this->clearJustFound();
-  }
-
-  /**
-   * Takes a string, returns anything before a <br> tag and its many variants.
-   *
-   * @param string $text
-   *   The text to break at the first <br> variant.
-   *
-   * @return string
-   *   The string appearing before the <br> or the full string if no <br>.
-   */
-  public static function trimAtBr($text = '') {
-    // Replace variations of br tag.
-    // @codingStandardsIgnoreStart
-    $search = array(
-      '<br>',
-      '<br />',
-      '<br/>',
+    // Remove specific strings.
+    // Strings to remove must be sorted by complexity.  More complex must come
+    // before smaller or less complex things.
+    $strings_to_remove = array(
+      'updated:',
+      'updated',
     );
-    $text = str_ireplace($search, '<br>', $text);
-    $texts = explode('<br>', $text);
-    // @codingStandardsIgnoreEnd
+    foreach ($strings_to_remove as $string_to_remove) {
+      $string = str_ireplace($string_to_remove, '', $string);
+    }
 
-    return $texts[0];
+    // Remove white space-like things from the ends and decodes html entities.
+    $string = StringCleanUp::superTrim($string);
+
+    return $string;
   }
 
   /**
-   * Takes a string, returns anything before a lone <br> tag and its variants.
+   * Evaluates $possibleText and if it checks out, returns TRUE.
    *
-   * @param string $text
-   *   The text to break at the first <br> variant.
-   * @param object $qp_element
-   *   The query path object that may need things removed from.
-   * @param int $max_length
-   *   The maximum length of the text to be considered valid.
+   * @param string $string
+   *   The string to validate.
+   *
+   * @return bool
+   *   TRUE if possibleText can be used as a title. FALSE if it can't.
+   */
+  protected function validateString($string) {
+    // Run through any evaluations. If it makes it to the end, it is good.
+    // Case race, first to evaluate TRUE aborts the text.
+    switch (TRUE) {
+      // List any cases below that would cause it to fail validation.
+      case empty($string):
+      case is_object($string):
+      case is_array($string);
+        return FALSE;
+
+      default:
+        return TRUE;
+    }
+  }
+
+  /**
+   * Processes a valid string before returning.
+   *
+   * @param string $string
+   *   The found, valid string.
    *
    * @return string
-   *   The string appearing before the blank <br> or the full string if no <br>.
+   *   The string to be returned.
    */
-  protected function trimAtBrBlank($text, $qp_element, $max_length = 0) {
-    // Replace variations of br tag.
-    // @codingStandardsIgnoreStart
-    $search = array(
-      '<br>',
-      '<br />',
-      '<br/>',
-    );
-    $text = str_ireplace($search, '<br>', $text);
-    $texts = explode('<br>', $text);
-    // @codingStandardsIgnoreEnd
-    $trimmed = '';
-    $lines_used = 0;
-    foreach ($texts as $line_num => $line) {
-      if (!empty($line)) {
-        $lines_used = $line_num;
-        $trimmed .= ' ' . $line;
-      }
-      else {
-        break;
-      }
-    }
-    // Clean string.
-    $processed_text = $this->cleanPossibleText($trimmed);
-    // Evaluate string.
-    $this->setPossibleText($processed_text);
-    $valid = $this->validatePossibleText();
-    $length = drupal_strlen($processed_text);
-    if ($valid && ($max_length == 0 || $max_length >= $length)) {
-      // It was valid so strip out each line.
-      foreach ($texts as $line_num => $line) {
-        if ($line_num <= $lines_used) {
-          $this->extractAndPutBack($line, $qp_element);
-        }
-      }
-      return $trimmed;
-    }
-    else {
-      return '';
-    }
+  protected function processString($string) {
+    return $string;
   }
 
-
   /**
-   * Is essentially a truncation hook for each class to extend if needed.
+   * Logs a system message.
+   *
+   * @param string $message
+   *   The message to store in the log. Keep $message translatable
+   *   by not concatenating dynamic values into it! Variables in the
+   *   message should be added by using placeholder strings alongside
+   *   the variables argument to declare the value of the placeholders.
+   *   See t() for documentation on how $message and $variables interact.
+   * @param array $variables
+   *   Array of variables to replace in the message on display or
+   *   NULL if message is already translated or not possible to
+   *   translate.
+   * @param int $severity
+   *   The severity of the message; one of the following values as defined in
+   *   - WATCHDOG_EMERGENCY: Emergency, system is unusable.
+   *   - WATCHDOG_ALERT: Alert, action must be taken immediately.
+   *   - WATCHDOG_CRITICAL: Critical conditions.
+   *   - WATCHDOG_ERROR: Error conditions.
+   *   - WATCHDOG_WARNING: Warning conditions.
+   *   - WATCHDOG_NOTICE: (default) Normal but significant conditions.
+   *   - WATCHDOG_INFO: Informational messages.
+   *   - WATCHDOG_DEBUG: Debug-level messages.
+   *
+   * @link http://www.faqs.org/rfcs/rfc3164.html RFC 3164: @endlink
    */
-  protected function truncateThisPossibleText() {
-    // This does nothing in the base class.
-    // Add your own copy of this to extended classes to create a truncation.
-  }
+  protected function obtainerMessage($message, $variables = array(), $severity = WATCHDOG_NOTICE) {
+    $type = get_class($this);
+    watchdog($type, $message, $variables, $severity);
 
-
-  /**
-   * Strips html, truncates to word boundary, and preserves what was left.
-   *
-   * @param string $text
-   *   Html or plain text to be truncated.
-   * @param int $length
-   *   The number of characters to truncate to.
-   * @param int $min_word_length
-   *   Minimum number of characters to consider something as a word.
-   *
-   * @return array
-   *   - truncated: Plain text that has been truncated.
-   *   - remaining: Plain text that was left.
-   */
-  public static function truncateThisWithoutHTML($text = '', $length = 255, $min_word_length = 2) {
-    $text = strip_tags($text);
-    $trunc_text = truncate_utf8($text, $length, TRUE, FALSE, $min_word_length);
-    // Check to see if any truncation is made.
-    if (strcmp($text, $trunc_text) != 0) {
-      // There was truncation, so process it differently.
-      // Grab the remaning text by removing $trunc_test.
-      $remaining_text = str_replace($trunc_text, '', $text);
+    if (drupal_is_cli() && variable_get('migrate_html_drush_debug', FALSE)) {
+      $formatted_message = format_string($message, $variables);
+      drush_print("$type: $formatted_message", 2);
     }
-    $return = array(
-      'truncated' => $trunc_text,
-      'remaining' => (!empty($remaining_text)) ? $remaining_text : '',
-    );
-
-    return $return;
-  }
-
-
-  /**
-   * Processes the entire method stack cleaning and evaluating as it goes.
-   *
-   * @param object $query_path
-   *   The query path object for with the content for searching.
-   *
-   * @param array $target_stack
-   *   The array of find methods to call.
-   *
-   * @param string $obtainer_name
-   *   The name of the obtainer calling this method, used only for debug output.
-   */
-  protected function processMethodStack($query_path, $target_stack, $obtainer_name) {
-    // Look for the target stack.
-    if (!empty($target_stack) && !empty($query_path) && is_array($target_stack)) {
-      // Loop through the stack.
-      foreach ($this->getMethodStack() as $target) {
-        // Check to see if this target has a method.
-        if (method_exists($this, $target)) {
-          // Set CurrentFindMethod.
-          $this->setCurrentFindMethod($target);
-          // Run the method to get $possibleText.
-          $this->setPossibleText($this->$target());
-          // Clean up the $possibleText.
-          $this->cleanThisPossibleText();
-          // Possible truncation available.
-          $this->truncateThisPossibleText();
-          // Evaluate the $possibleText.
-          if ($this->validatePossibleText()) {
-            // Set $textToReturn to $possibleText.
-            $this->setTextToReturn($this->getPossibleText());
-            // Remove the element from the dom.
-            $this->removeFoundDomElement();
-
-            // We have what we need, get out.
-            break;
-          }
-          else {
-            // Current Find Method found nothing useable.
-            $this->setCurrentFindMethod('');
-          }
-
-        }
-        else {
-          // Output a message that the method does not exist.
-          drush_migrate_html_debug_output("The target method '{$target}' in {$obtainer_name} does not exist and was skipped.");
-        }
-      }
-
-    }
-    $cfm = $this->getCurrentFindMethod();
-    if (!empty($cfm)) {
-      drush_migrate_html_debug_output("{$obtainer_name}-Matched: {$this->getCurrentFindMethod()}");
-    }
-    else {
-      drush_migrate_html_debug_output("{$obtainer_name}-Matched: NO MATCHES FOUND");
-    }
-
-  }
-
-
-  /**
-   * A default findMethod for use when you want nothing found.
-   *
-   * @return string
-   *   An empty text.
-   */
-  private function findNothing() {
-    return '';
   }
 }
