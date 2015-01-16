@@ -14,14 +14,18 @@ class ExampleBinaryFileMigration extends BinaryFileMigration {
   public function __construct($arguments) {
     $this->description = t('Migrates non-image files from the example subdirectory.');
 
-    // Match .pdf files only.
+    // Define source directories, relative to directory defined in
+    // migrate_html_base_dir variable.
     $source_dirs = array(
       'example',
     );
 
     $regex = '/.*\.(pdf|txt|rtf|doc|docx|xls|xlsx|csv|mp3|mp4|wpd|wp|qpw|xml|ppt|pptx)/';
+
+    // Define a destination directory using a stream wrapper.
     $dest_dir = 'public:///example/docs';
 
+    // Optionally set an array of options to be passed to Migrate.
     $options = array('recurse' => TRUE);
 
     // This will setup $this->map, $this->destination, and $this->source.
