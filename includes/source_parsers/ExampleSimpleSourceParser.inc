@@ -4,10 +4,10 @@
  * ExampleSourceParser.
  */
 
-class ExampleSourceParser extends SourceParser {
+class ExampleSimpleSourceParser extends SourceParser {
 
   /**
-   * {@inheritdoc}
+   * Overrides SourceParser->setBody().
    */
   public function setBody() {
 
@@ -25,5 +25,12 @@ class ExampleSourceParser extends SourceParser {
 
     }
     parent::setBody();
+  }
+
+  /**
+   * Gets the markup for our special field.
+   */
+  public function getSpecialFieldMarkup() {
+    $this->queryPath->find(".my-special-field")->text();
   }
 }

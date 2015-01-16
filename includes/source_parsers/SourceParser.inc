@@ -21,13 +21,9 @@ class SourceParser {
    *   Arguments array passed from migration class.
    */
   protected $arguments = array();
-  protected $body;
-  protected $date;
   protected $fileId;
   protected $id;
   public $queryPath;
-  protected $subTitle = '';
-  protected $title;
 
   /**
    * Constructor.
@@ -36,26 +32,23 @@ class SourceParser {
    *   The file id, e.g. careers/legal/pm7205.html
    * @param string $html
    *   The full HTML data as loaded from the file.
-   * @param bool $fragment
-   *   Set to TRUE if there are no <html>,<head>, or <body> tags in the HTML.
    * @param array $qp_options
    *   An associative array of options to be passed to the html_qp() function.
    * @param array $arguments
    *   An associative array arguments passed up from the migration class.
    */
-  public function __construct($file_id, $html, $fragment = FALSE, $qp_options = array(), $arguments = array()) {
+  public function __construct($file_id, $html, $qp_options = array(), $arguments = array()) {
     $this->mergeArguments((array) $arguments);
 
     $html = StringCleanUp::fixEncoding($html);
-
-    // Strip Windows' CR chars.
     $html = StringCleanUp::stripWindowsCRChars($html);
     $html = StringCleanUp::fixWindowSpecificChars($html);
 
     $this->initQueryPath($html, $qp_options);
-
     $this->fileId = $file_id;
+
     // Runs the methods defined in getParseOrder to set Title, date, body, etc.
+    $this->drushPrintSeparator();
     $this->runParserOrder($this->getParseOrder());
   }
 
@@ -103,183 +96,11 @@ class SourceParser {
   protected function cleanHtml() {
     try {
       HtmlCleanUp::convertRelativeSrcsToAbsolute($this->queryPath, $this->fileId);
-
-      // Clean up specific to the example site.
       HtmlCleanUp::stripOrFixLegacyElements($this->queryPath, $this->arguments);
     }
     catch (Exception $e) {
-      watchdog('migrate_html', '%file: failed to clean the html, Error: %error', array(
-        '%file' => $this->fileId,
-        '%error' => $e->getMessage(),
-      ), WATCHDOG_ERROR);
+      $this->sourceParserMessage('Failed to clean the html, Exception: @error_message', array('@error_message' => $e->getMessage()), WATCHDOG_ERROR);
     }
-  }
-
-  /**
-   * Getter.
-   */
-  public function getDate() {
-    return $this->date;
-  }
-
-  /**
-   * Setter.
-   */
-  protected function setDate($override = '') {
-    if (empty($override)) {
-      // Default stack: Use this if none was defined in
-      // $arguments['obtainer_methods'].
-      $default_target_stack = array();
-
-      $om = $this->getObtainerMethods('date');
-      $date_find_stack = (!empty($om)) ? $om : $default_target_stack;
-      $obtained_date = new ObtainDate($this->queryPath, $date_find_stack);
-      $date = $obtained_date->formatDate('n/d/Y');
-      $date_string_raw = $obtained_date->getText();
-    }
-    else {
-      // The override was invoked, so use it.
-      $date = $override;
-      $date_string_raw = $override;
-    }
-
-    $this->date = $date;
-    // Output to show progress to aid debugging.
-    drush_migrate_html_debug_output("--date--> Raw:{$date_string_raw}  Formatted:{$this->getDate()}");
-  }
-
-
-  /**
-   * Getter.
-   */
-  public function getID() {
-    return $this->id;
-  }
-
-
-  /**
-   * Setter.
-   */
-  protected function setID($override = '') {
-    if (empty($override)) {
-      // Default stack: Use this if none was defined in
-      // $arguments['obtainer_methods'].
-      $default_target_stack = array();
-
-      $id = $this->runObtainer('ObtainID', 'id', $default_target_stack);
-    }
-    else {
-      // The override was invoked, so use it.
-      $id = $override;
-    }
-
-    $this->id = $id;
-    // Output to show progress to aid debugging.
-    drush_migrate_html_debug_output("--id-->  {$this->getID()}");
-  }
-
-
-  /**
-   * Sets $this->title using breadcrumb or <title>.
-   */
-  protected function setTitle($override = '') {
-
-    // QueryPathing our way through things can fail.
-    // In that case let's still set things and inform people about the issue.
-    try {
-      if (empty($override)) {
-        // Default stack: Use this if none was defined in
-        // $arguments['obtainer_methods'].
-        $default_target_stack = array(
-          'findClassBreadcrumbMenuContentLast',
-          'findTitleTag',
-          'findH1First',
-        );
-
-        $target_stack = $this->getObtainerMethods('title');
-        $title_find_stack = (!empty($target_stack)) ? $target_stack : $default_target_stack;
-        $obtained_title = new ObtainTitle($this->queryPath, $title_find_stack);
-        $title = $obtained_title->getText();
-
-        // Check for discarded text and for a setSubTitle method.
-        // Some extensions may have them, but the base class does not.
-        $discarded = $obtained_title->getTextDiscarded();
-        if (!empty($discarded) && method_exists($this, 'setSubTitle')) {
-          // Put the discarded text into the subtitle.  It might not be right,
-          // but at least it is not lost.
-          $this->setSubTitle($discarded);
-        }
-      }
-      else {
-        // The override was invoked, so use it.
-        $title = $override;
-      }
-
-      $this->title = $title;
-      // Output to show progress to aid debugging.
-      drush_migrate_html_debug_output("{$this->fileId}  --->  {$this->title}");
-    }
-    catch (Exception $e) {
-      $this->title = "";
-      watchdog('migrate_html', '%file: failed to set the title', array('%file' => $this->fileId), WATCHDOG_ALERT);
-      drush_migrate_html_debug_output("ERROR: {$this->fileId} failed to set title.");
-    }
-  }
-
-
-  /**
-   * Return the title for this content.
-   */
-  public function getTitle() {
-    // The title gets set in the constructor, no need to check here.
-    return $this->title;
-  }
-
-
-  /**
-   * Getter.
-   */
-  public function getSubTitle() {
-    return $this->subTitle;
-  }
-
-
-  /**
-   * Get the body from html and set the body var.
-   *
-   * @param string $body
-   *   (optional) The body value to be set. Defaults to finding body via
-   *   default method stack.
-   */
-  public function setBody($body = '') {
-    if (empty($body)) {
-      // Default stack: Use this if none was defined in
-      // $arguments['obtainer_methods'].
-      $default_method_stack = array(
-        'findTopBodyHtml',
-        'findClassContentSub',
-      );
-      $body = $this->runObtainer('ObtainBody', 'body', $default_method_stack);
-    }
-
-    $this->body = $body;
-
-    // Output to show progress to aid debugging.
-    if (!empty($this->body)) {
-      drush_migrate_html_debug_output("--body-->  found something");
-    }
-    else {
-      drush_migrate_html_debug_output("--body-->  FOUND NOTHING");
-    }
-  }
-
-
-  /**
-   * Return content of <body> element.
-   */
-  public function getBody() {
-    // The body gets set in the constructor, no need to check for existence.
-    return $this->body;
   }
 
   /**
@@ -289,16 +110,10 @@ class SourceParser {
    *   The update date.
    */
   public function extractUpdatedDate() {
-    // Default stack: Use this if none was defined in
-    // $arguements['obtainer_methods'].
-    $default_target_stack = array(
+    $method_stack = array(
       'findClassLastupdate',
     );
-
-    $method = $this->getObtainerMethods('date_updated');
-    $date_find_stack = (!empty($method)) ? $method : $default_target_stack;
-    $obtained_date = new ObtainDate($this->queryPath, $date_find_stack);
-    $date = $obtained_date->getText();
+    $date = $this->runObtainer('ObtainDate', 'date_updated', $method_stack);
 
     return $date;
   }
@@ -392,7 +207,6 @@ class SourceParser {
     return "";
   }
 
-
   /**
    * Basic getter for $arguments.
    *
@@ -402,7 +216,6 @@ class SourceParser {
   public function getArguments() {
     return $this->arguments;
   }
-
 
   /**
    * Merges an array into the arguments array.
@@ -415,7 +228,6 @@ class SourceParser {
       $this->arguments = array_merge($this->getArguments(), $new_args);
     }
   }
-
 
   /**
    * Gets a single argument from the arguments array.
@@ -436,7 +248,6 @@ class SourceParser {
     return array();
   }
 
-
   /**
    * Gets the specified obtainer methods from the arguments.
    *
@@ -455,34 +266,30 @@ class SourceParser {
     return array();
   }
 
-
   /**
    * Adds an array of obtainer method arrays overwriting existing methods.
    *
    * @param array $obtainer_methods
    *   An array of obtainer method arrays.
    */
-  protected function setObtainerMethods($obtainer_methods = array()) {
-    if ((!empty($obtainer_methods)) && (is_array($obtainer_methods))) {
-      $args = $this->getArguments();
-      // Loop through new array of obtainer methods.
-      foreach ($obtainer_methods as $obtainer_methods_key => $stack) {
-        // Put the new into the original.
-        $args['obtainer_methods'][$obtainer_methods_key] = $stack;
-      }
-      // Put the newly formed args back.
-      $this->mergeArguments($args);
+  protected function setObtainerMethods(array $obtainer_methods) {
+    $args = $this->getArguments();
+    // Loop through new array of obtainer methods.
+    foreach ($obtainer_methods as $obtainer_methods_key => $stack) {
+      // Put the new into the original.
+      $args['obtainer_methods'][$obtainer_methods_key] = $stack;
     }
+    // Put the newly formed args back.
+    $this->mergeArguments($args);
   }
 
   /**
    * Defines and returns an array of parsing methods to call in order.
    *
    * @return array
-   *   An array of parssing methods to call in order.
+   *   An array of parsing methods to call in order.
    */
   public function getParseOrder() {
-    // Specify the parsing methods that should run in order.
     return array(
       // Getting the title relies on html that could be wiped during clean up
       // so let's get it before we clean things up.
@@ -495,59 +302,112 @@ class SourceParser {
   }
 
   /**
+   * Use an Obtainer class to obtain some markup.
+   *
+   * @param string $obtainer_class
+   *   The name of the obtainer class to use.
+   * @param object $query_path
+   *   The query path object to use as the source of possible content.
+   * @param array $method_stack
+   *   The stack of findMethods to use.
+   */
+  public function obtain($obtainer_class, $query_path, $method_stack) {
+    $obtainer = new $obtainer_class($query_path, $method_stack);
+
+    return $obtainer->obtain();
+  }
+
+  /**
    * Runs an obtainer and returns the text it found.
    *
    * @param string $obtainer_class
    *   The name of the obtainer class to use.
    * @param string $obtainer_methods_key
    *   The key for the obtainer arguments array to see which findMethods to run.
-   * @param array $default_method_stack
-   *   (optional) The default stack of findMethods to use if none is available
-   *   from the arguments.
+   * @param array $method_stack
+   *   (optional) The stack of findMethods to use. Defaults to values from
+   *   $this->getObtainerMethods().
    *
    * @return string
    *   The string retrieved by executing the obtainer.
    */
-  public function runObtainer($obtainer_class, $obtainer_methods_key, $default_method_stack = array()) {
+  public function runObtainer($obtainer_class, $obtainer_methods_key, $method_stack = array()) {
     $text = '';
 
     try {
-      $method_stack = $this->getObtainerMethods($obtainer_methods_key);
       if (empty($method_stack)) {
-        $method_stack = $default_method_stack;
+        $method_stack = $this->getObtainerMethods($obtainer_methods_key);
       }
-      $obtained = new $obtainer_class($this->queryPath, $method_stack);
-      $text = $obtained->getText();
+
+      $this->sourceParserMessage("Obtaining @key via @obtainer_class", array('@key' => $obtainer_methods_key, '@obtainer_class' => $obtainer_class));
+      $text = $this->obtain($obtainer_class, $this->queryPath, $method_stack);
     }
     catch (Exception $e) {
-      watchdog('migrate_html', '%file: failed to set the %obtainer_methods_key because: %message', array(
-        '%obtainer_methods_key' => $obtainer_methods_key,
-        '%file' => $this->fileId,
-        '%message' => $e->getMessage(),
-      ), WATCHDOG_ALERT);
-      drush_migrate_html_debug_output("ERROR: {$this->fileId} failed to set $obtainer_methods_key Exception: {$e->getMessage()}");
+      $this->sourceParserMessage("Failed to set @key, Exception: @error_message", array(
+        '@key' => $obtainer_methods_key,
+        '@error_message' => $e->getMessage(),
+      ), WATCHDOG_ERROR);
     }
 
     return $text;
   }
 
-
   /**
-   * Runs the parse methods prescribed by getParseOrder().
+   * Runs the parse methods defined in by getParseOrder().
    */
   protected function runParserOrder() {
-    drush_migrate_html_debug_output('----------------------row-------------------');
     $parse_methods = $this->getParseOrder();
-    foreach (is_array($parse_methods) ? $parse_methods : array() as $method) {
-      // Check to see if this $method is an available method.
-      if (method_exists($this, $method)) {
-        // Run the method to do its job.
-        $this->$method();
-      }
-      else {
-        // Output a message that the method does not exist.
-        drush_migrate_html_debug_output("The parser method '{$method}' in SourceParser and its children does not exist and was skipped.");
-      }
+    foreach ($parse_methods as $method) {
+      $this->$method();
+    }
+  }
+
+  /**
+   * Prints a log message separator to drush.
+   */
+  protected function drushPrintSeparator() {
+    if (drupal_is_cli() && variable_get('migrate_html_drush_debug', FALSE)) {
+      drush_print(str_repeat('-', 40));
+      $this->sourceParserMessage('@class: @file_id:', array('@class' => get_class($this), '@file_id' => $this->fileId), WATCHDOG_DEBUG, 0);
+    }
+  }
+
+  /**
+   * Logs a system message.
+   *
+   * @param string $message
+   *   The message to store in the log. Keep $message translatable
+   *   by not concatenating dynamic values into it! Variables in the
+   *   message should be added by using placeholder strings alongside
+   *   the variables argument to declare the value of the placeholders.
+   *   See t() for documentation on how $message and $variables interact.
+   * @param array $variables
+   *   Array of variables to replace in the message on display or
+   *   NULL if message is already translated or not possible to
+   *   translate.
+   * @param int $severity
+   *   The severity of the message; one of the following values as defined in
+   *   - WATCHDOG_EMERGENCY: Emergency, system is unusable.
+   *   - WATCHDOG_ALERT: Alert, action must be taken immediately.
+   *   - WATCHDOG_CRITICAL: Critical conditions.
+   *   - WATCHDOG_ERROR: Error conditions.
+   *   - WATCHDOG_WARNING: Warning conditions.
+   *   - WATCHDOG_NOTICE: (default) Normal but significant conditions.
+   *   - WATCHDOG_INFO: Informational messages.
+   *   - WATCHDOG_DEBUG: Debug-level messages.
+   *
+   * @param int $indent
+   *   (optional). Sets indentation for drush output. Defaults to 1.
+   *
+   * @link http://www.faqs.org/rfcs/rfc3164.html RFC 3164: @endlink
+   */
+  protected function sourceParserMessage($message, $variables = array(), $severity = WATCHDOG_NOTICE, $indent = 1) {
+    $type = get_class($this);
+    watchdog($type, $message, $variables, $severity);
+
+    if (drupal_is_cli() && variable_get('migrate_html_drush_debug', FALSE)) {
+      $formatted_message = format_string($message, $variables);
+      drush_print($formatted_message, $indent);
     }
   }
 }
